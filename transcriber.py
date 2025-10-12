@@ -7,8 +7,9 @@ from torch.optim import AdamW
 from evaluate import load
 import pandas as pd
 from tqdm import tqdm
+from torch.nn.utils.rnn import pad_sequence
 
-
+# ------------------ CONFIG ------------------
 TRAIN_DIR = "TrainingSet"
 VAL_DIR = "ValidationSet"
 TEST_DIR = "TestSet"
@@ -21,7 +22,7 @@ LEARNING_RATE = 1e-5
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-
+# ------------------ DATASET ------------------
 class AudioTranscriptionDataset(Dataset):
     def __init__(self, audio_dir, transcript_dir, processor):
         self.samples = []
@@ -50,23 +51,38 @@ class AudioTranscriptionDataset(Dataset):
         speech_array, sampling_rate = torchaudio.load(audio_path)
         speech_array = torchaudio.functional.resample(speech_array, sampling_rate, 16000).squeeze()
 
-        inputs = self.processor(
+        # Convert to Whisper input features
+        input_features = self.processor(
             speech_array,
             sampling_rate=16000,
-            text=transcript,
-            return_tensors="pt",
-            padding="longest",
-            truncation=True,
-        )
+            return_tensors="pt"
+        ).input_features[0]
 
-        
-        return inputs.input_features[0], inputs.labels[0]
+        # Tokenize transcript for labels
+        with self.processor.as_target_processor():
+            labels = self.processor(
+                transcript,
+                return_tensors="pt",
+                padding="longest"
+            ).input_ids[0]
+
+        return input_features, labels
 
 
+# ------------------ COLLATE FUNCTION ------------------
+def collate_fn(batch):
+    input_features, labels = zip(*batch)
+
+    input_features_padded = pad_sequence(input_features, batch_first=True)
+    labels_padded = pad_sequence(labels, batch_first=True, padding_value=-100)  # -100 ignored by loss
+
+    return input_features_padded, labels_padded
+
+
+# ------------------ SETUP ------------------
 processor = WhisperProcessor.from_pretrained(MODEL_NAME)
 model = WhisperForConditionalGeneration.from_pretrained(MODEL_NAME).to(DEVICE)
 cer_metric = load("cer")
-
 
 train_dataset = AudioTranscriptionDataset(
     os.path.join(TRAIN_DIR, "audio"),
@@ -84,10 +100,9 @@ test_dataset = AudioTranscriptionDataset(
     processor,
 )
 
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
-val_loader = DataLoader(val_dataset, batch_size=1, num_workers=1)
-test_loader = DataLoader(test_dataset, batch_size=1, num_workers=1)
-
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn, num_workers=2)
+val_loader = DataLoader(val_dataset, batch_size=1, collate_fn=collate_fn, num_workers=1)
+test_loader = DataLoader(test_dataset, batch_size=1, collate_fn=collate_fn, num_workers=1)
 
 optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
 num_training_steps = len(train_loader) * EPOCHS
@@ -98,6 +113,7 @@ best_cer = float("inf")
 best_model_path = os.path.join(OUTPUT_DIR, "best_model.pt")
 
 
+# ------------------ TRAINING LOOP ------------------
 for epoch in range(EPOCHS):
     print(f"\nEpoch {epoch + 1}/{EPOCHS}")
     model.train()
@@ -122,7 +138,7 @@ for epoch in range(EPOCHS):
     train_losses.append(avg_train_loss)
     print(f"Training Loss: {avg_train_loss:.4f}")
 
- 
+    # ------------------ VALIDATION ------------------
     model.eval()
     val_loss = 0.0
     cer_total = 0.0
@@ -136,10 +152,10 @@ for epoch in range(EPOCHS):
             outputs = model(input_features=input_features, labels=labels)
             val_loss += outputs.loss.item()
 
-            pred_ids = torch.argmax(outputs.logits, dim=-1)
+            pred_ids = model.generate(input_features)
             pred_str = processor.batch_decode(pred_ids, skip_special_tokens=True)
             label_str = processor.batch_decode(labels, skip_special_tokens=True)
-            cer_total += cer_metric.compute(predictions=pred_str, references=label_str)["cer"]
+            cer_total += cer_metric.compute(predictions=pred_str, references=label_str)
 
     avg_val_loss = val_loss / len(val_loader)
     avg_cer = cer_total / len(val_loader)
@@ -148,16 +164,14 @@ for epoch in range(EPOCHS):
 
     print(f"Validation Loss: {avg_val_loss:.4f} | CER: {avg_cer:.4f}")
 
-    # Save best model based on CER
     if avg_cer < best_cer:
         best_cer = avg_cer
         torch.save(model.state_dict(), best_model_path)
         print(f"New best model saved (CER: {best_cer:.4f})")
 
-    # Save checkpoint each epoch
     torch.save(model.state_dict(), os.path.join(OUTPUT_DIR, f"model_epoch_{epoch+1}.pt"))
 
-
+# ------------------ SAVE TRAINING METRICS ------------------
 df = pd.DataFrame({
     "Epoch": range(1, EPOCHS + 1),
     "TrainLoss": train_losses,
@@ -168,7 +182,7 @@ df.to_csv("loss_history.csv", index=False)
 print("\nTraining complete!")
 print(f"Best model saved at: {best_model_path} (CER: {best_cer:.4f})")
 
-
+# ------------------ TEST EVALUATION ------------------
 print("\nEvaluating best model on TEST SET...")
 best_model = WhisperForConditionalGeneration.from_pretrained(MODEL_NAME).to(DEVICE)
 best_model.load_state_dict(torch.load(best_model_path, map_location=DEVICE))
@@ -181,11 +195,10 @@ with torch.no_grad():
         input_features = input_features.to(DEVICE)
         labels = labels.to(DEVICE)
 
-        outputs = best_model(input_features=input_features, labels=labels)
-        pred_ids = torch.argmax(outputs.logits, dim=-1)
+        pred_ids = best_model.generate(input_features)
         pred_str = processor.batch_decode(pred_ids, skip_special_tokens=True)
         label_str = processor.batch_decode(labels, skip_special_tokens=True)
-        test_cer_total += cer_metric.compute(predictions=pred_str, references=label_str)["cer"]
+        test_cer_total += cer_metric.compute(predictions=pred_str, references=label_str)
 
 avg_test_cer = test_cer_total / len(test_loader)
-print(f"\nTest Set CER: {avg_test_cer:.4f}")
+print(f"\n🧪 Test Set CER: {avg_test_cer:.4f}")
