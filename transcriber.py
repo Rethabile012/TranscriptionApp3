@@ -51,22 +51,23 @@ class AudioTranscriptionDataset(Dataset):
         speech_array, sampling_rate = torchaudio.load(audio_path)
         speech_array = torchaudio.functional.resample(speech_array, sampling_rate, 16000).squeeze()
 
-        # Convert to Whisper input features
-        input_features = self.processor(
+        # Process the audio
+        input_features = self.processor.feature_extractor(
             speech_array,
             sampling_rate=16000,
             return_tensors="pt"
         ).input_features[0]
 
-        # Tokenize transcript for labels
-        with self.processor.as_target_processor():
-            labels = self.processor(
-                transcript,
-                return_tensors="pt",
-                padding="longest"
-            ).input_ids[0]
+        # Process the text (tokenize labels)
+        labels = self.processor.tokenizer(
+            transcript,
+            return_tensors="pt",
+            padding="longest",
+            truncation=True
+        ).input_ids[0]
 
         return input_features, labels
+
 
 
 # ------------------ COLLATE FUNCTION ------------------
