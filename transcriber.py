@@ -17,7 +17,7 @@ MODEL_NAME = "openai/whisper-small"
 OUTPUT_DIR = "/kaggle/working/checkpoints"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 BATCH_SIZE = 2
-EPOCHS = 50
+EPOCHS = 10
 LEARNING_RATE = 1e-5
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
