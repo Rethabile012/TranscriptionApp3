@@ -9,7 +9,7 @@ import pandas as pd
 from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
 
-# ------------------ CONFIG ------------------
+
 TRAIN_DIR = "TrainingSet"
 VAL_DIR = "ValidationSet"
 TEST_DIR = "TestSet"
@@ -22,7 +22,7 @@ LEARNING_RATE = 1e-5
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# ------------------ DATASET ------------------
+
 class AudioTranscriptionDataset(Dataset):
     def __init__(self, audio_dir, transcript_dir, processor):
         self.samples = []
@@ -70,17 +70,17 @@ class AudioTranscriptionDataset(Dataset):
 
 
 
-# ------------------ COLLATE FUNCTION ------------------
+
 def collate_fn(batch):
     input_features, labels = zip(*batch)
 
     input_features_padded = pad_sequence(input_features, batch_first=True)
-    labels_padded = pad_sequence(labels, batch_first=True, padding_value=-100)  # -100 ignored by loss
+    labels_padded = pad_sequence(labels, batch_first=True, padding_value=-100)  
 
     return input_features_padded, labels_padded
 
 
-# ------------------ SETUP ------------------
+
 processor = WhisperProcessor.from_pretrained(MODEL_NAME)
 model = WhisperForConditionalGeneration.from_pretrained(MODEL_NAME).to(DEVICE)
 cer_metric = load("cer")
@@ -114,7 +114,7 @@ best_cer = float("inf")
 best_model_path = os.path.join(OUTPUT_DIR, "best_model.pt")
 
 
-# ------------------ TRAINING LOOP ------------------
+
 for epoch in range(EPOCHS):
     print(f"\nEpoch {epoch + 1}/{EPOCHS}")
     model.train()
@@ -139,7 +139,7 @@ for epoch in range(EPOCHS):
     train_losses.append(avg_train_loss)
     print(f"Training Loss: {avg_train_loss:.4f}")
 
-    # ------------------ VALIDATION ------------------
+    
     model.eval()
     val_loss = 0.0
     cer_total = 0.0
@@ -172,7 +172,7 @@ for epoch in range(EPOCHS):
 
     torch.save(model.state_dict(), os.path.join(OUTPUT_DIR, f"model_epoch_{epoch+1}.pt"))
 
-# ------------------ SAVE TRAINING METRICS ------------------
+
 df = pd.DataFrame({
     "Epoch": range(1, EPOCHS + 1),
     "TrainLoss": train_losses,
@@ -183,7 +183,7 @@ df.to_csv("loss_history.csv", index=False)
 print("\nTraining complete!")
 print(f"Best model saved at: {best_model_path} (CER: {best_cer:.4f})")
 
-# ------------------ TEST EVALUATION ------------------
+
 print("\nEvaluating best model on TEST SET...")
 best_model = WhisperForConditionalGeneration.from_pretrained(MODEL_NAME).to(DEVICE)
 best_model.load_state_dict(torch.load(best_model_path, map_location=DEVICE))
@@ -202,4 +202,4 @@ with torch.no_grad():
         test_cer_total += cer_metric.compute(predictions=pred_str, references=label_str)
 
 avg_test_cer = test_cer_total / len(test_loader)
-print(f"\n🧪 Test Set CER: {avg_test_cer:.4f}")
+print(f"\nTest Set CER: {avg_test_cer:.4f}")
