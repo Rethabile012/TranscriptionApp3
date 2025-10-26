@@ -10,9 +10,9 @@ from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
 
 
-TRAIN_DIR = "TrainingSet"
-VAL_DIR = "ValidationSet"
-TEST_DIR = "TestSet"
+TRAIN_DIR = "/kaggle/input/transcriptions/Pipeline 2/TrainingSet"
+VAL_DIR = "/kaggle/input/transcriptions/Pipeline 2/ValidationSet"
+TEST_DIR = "/kaggle/input/transcriptions/Pipeline 2/TestSet"
 MODEL_NAME = "openai/whisper-small"
 OUTPUT_DIR = "/kaggle/working/checkpoints"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
